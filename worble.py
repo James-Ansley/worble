@@ -1,6 +1,7 @@
 import bisect
 import os
 import random
+import string
 from collections import Counter
 from pathlib import PurePath
 
@@ -17,15 +18,22 @@ with open(DATA_ROOT / 'words.txt', 'r') as f:
     all_words = f.read().splitlines()
 
 
+keyboard = {ch: 0 for ch in string.ascii_lowercase}
+
+
 def print_keyboard(correct, in_word, not_in_word):
+    global keyboard
+    keyboard |= {ch: -1 for ch in not_in_word}
+    keyboard |= {ch: 1 for ch in in_word if keyboard[ch] != 2}
+    keyboard |= {ch: 2 for ch in correct}
     chars = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', 'a', 's', 'd',
              'f', 'g', 'h', 'j', 'k', 'l', 'z', 'x', 'c', 'v', 'b', 'n', 'm']
     for i, char in enumerate(chars):
-        if char in not_in_word:
+        if keyboard[char] == -1:
             chars[i] = '_'
-        elif char in in_word:
+        elif keyboard[char] == 1:
             chars[i] = f'{YELLOW_HIGHLIGHT}{char}{HIGHLIGHT_OFF}'
-        elif char in correct:
+        elif keyboard[char] == 2:
             chars[i] = f'{GREEN_HIGHLIGHT}{char}{HIGHLIGHT_OFF}'
     print(' '.join(chars[:10]))
     print(' ' + ' '.join(chars[10:19]))
@@ -94,14 +102,12 @@ def get_guess(guess_num):
 def main():
     word = random.choice(winning_words)
     guess_num = 1
-    not_in_word = set()
     past_guesses = []
     clear()
     while guess_num <= NUM_GUESSES:
         guess = get_guess(guess_num)
         past_guesses.append(format_guess(word, guess))
-        not_in_word |= incorrect_chars(word, guess)
-        print_game(word, guess, past_guesses, not_in_word)
+        print_game(word, guess, past_guesses, incorrect_chars(word, guess))
         if guess == word:
             print(f'Congratulations! Word guessed in {guess_num} guesses')
             return
