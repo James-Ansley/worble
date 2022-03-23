@@ -1,97 +1,109 @@
 import bisect
 import os
 import random
+import sqlite3
 import string
+import textwrap
 from collections import Counter
-from math import log10, floor
 from pathlib import Path
 
-import sqlite3
-
 DATA_ROOT = Path(__file__).parent.resolve() / 'data'
-NUM_GUESSES = 6
-GREEN_HIGHLIGHT = '\033[42m'
-YELLOW_HIGHLIGHT = '\033[43m'
-HIGHLIGHT_OFF = '\033[m'
-
 with open(DATA_ROOT / 'winning_words.txt', 'r') as f:
-    winning_words = f.read().splitlines()
+    WINNING_WORDS = f.read().splitlines()
 
 with open(DATA_ROOT / 'words.txt', 'r') as f:
-    all_words = f.read().splitlines()
+    ALL_WORDS = f.read().splitlines()
 
-keyboard = {ch: 0 for ch in string.ascii_lowercase}
+NUM_GUESSES = 6
+GREEN = '\033[42m'
+YELLOW = '\033[43m'
+OFF = '\033[m'
+ROW_1 = 'qwertyuiop'
+ROW_2 = 'asdfghjkl'
+ROW_3 = 'zxcvbnm'
 
+# index of value refers to knowledge.
+# 0: not in word, 1: unknown, 2: wrong location, 3: correct
+CHARACTER_DISPLAY = {
+    ch: ('_', ch, f'{YELLOW}{ch}{OFF}', f'{GREEN}{ch}{OFF}')
+    for ch in string.ascii_lowercase
+}
+character_knowledge = {ch: 1 for ch in string.ascii_lowercase}
 
-def print_keyboard(correct, in_word, not_in_word):
-    global keyboard
-    keyboard |= {ch: -1 for ch in not_in_word}
-    keyboard |= {ch: 1 for ch in in_word if keyboard[ch] != 2}
-    keyboard |= {ch: 2 for ch in correct}
-    chars = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', 'a', 's', 'd',
-             'f', 'g', 'h', 'j', 'k', 'l', 'z', 'x', 'c', 'v', 'b', 'n', 'm']
-    for i, char in enumerate(chars):
-        if keyboard[char] == -1:
-            chars[i] = '_'
-        elif keyboard[char] == 1:
-            chars[i] = f'{YELLOW_HIGHLIGHT}{char}{HIGHLIGHT_OFF}'
-        elif keyboard[char] == 2:
-            chars[i] = f'{GREEN_HIGHLIGHT}{char}{HIGHLIGHT_OFF}'
-    print(' '.join(chars[:10]))
-    print(' ' + ' '.join(chars[10:19]))
-    print('  ' + ' '.join(chars[19:]))
+past_guesses = []
 
 
-def correct_chars(word, guess):
-    return [c1 for c1, c2 in zip(word, guess) if c1 == c2]
-
-
-def in_word_chars(word: str, guess: str):
-    return (
-            Counter(guess)
-            - (Counter(guess) - Counter(word))
-            - Counter(correct_chars(word, guess))
+def format_row(chars):
+    return ' '.join(
+        CHARACTER_DISPLAY[ch][character_knowledge[ch]]
+        for ch in chars
     )
 
 
-def incorrect_chars(word, guess):
-    return set(guess).difference(word)
+def print_keyboard():
+    print(format_row(ROW_1))
+    print(' ' + format_row(ROW_2))
+    print('  ' + format_row(ROW_3))
 
 
-def format_guess(word, guess):
-    correct_chars_ = in_word_chars(word, guess)
+def correct_chars(guess):
+    return [c1 for c1, c2 in zip(WORD, guess) if c1 == c2]
+
+
+def in_wrong_place_chars(guess: str):
+    return (
+            Counter(guess)
+            - (Counter(guess) - Counter(WORD))
+            - Counter(correct_chars(guess))
+    )
+
+
+def incorrect_chars(guess):
+    return set(guess).difference(WORD)
+
+
+def update_knowledge(guess):
+    not_in_word = incorrect_chars(guess)
+    in_wrong_place = in_wrong_place_chars(guess)
+    correct = correct_chars(guess)
+    for char, value in character_knowledge.items():
+        if char in not_in_word:
+            character_knowledge[char] = 0
+        if char in in_wrong_place and value == 1:
+            character_knowledge[char] = 2
+        if char in correct:
+            character_knowledge[char] = 3
+
+
+def format_guess(guess):
+    in_wrong_place_count = in_wrong_place_chars(guess)
     guess = list(guess)
-    for i, (c1, c2) in enumerate(zip(word, guess)):
+    for i, (c1, c2) in enumerate(zip(WORD, guess)):
         if c1 == c2:
-            guess[i] = f'{GREEN_HIGHLIGHT}{c2}{HIGHLIGHT_OFF}'
-        elif correct_chars_[c2] > 0:
-            correct_chars_.subtract(c2)
-            guess[i] = f'{YELLOW_HIGHLIGHT}{c2}{HIGHLIGHT_OFF}'
+            guess[i] = f'{GREEN}{c2}{OFF}'
+        elif in_wrong_place_count[c2] > 0:
+            in_wrong_place_count.subtract(c2)
+            guess[i] = f'{YELLOW}{c2}{OFF}'
     return ''.join(guess)
 
 
-def guess_is_valid(guess: str) -> bool:
-    i = bisect.bisect_left(all_words, guess)
-    return all_words[i] == guess and len(guess) == 5
+def print_text(text):
+    print(*textwrap.wrap(text, 19), sep='\n')
 
 
-def clear():
+def print_game():
     os.system('cls||clear')
     print(f'{" Worble! ":~^19}')
-
-
-def print_game(word, guess, past_guesses, not_in_word):
-    clear()
     for attempt in past_guesses:
         print(' ' * 7 + attempt)
-    print_keyboard(
-        correct_chars(word, guess),
-        in_word_chars(word, guess),
-        not_in_word,
-    )
+    print_keyboard()
 
 
 def get_guess(guess_num):
+    def guess_is_valid(guess: str) -> bool:
+        i = bisect.bisect_left(ALL_WORDS, guess)
+        return ALL_WORDS[i] == guess
+
     guess = ''
     while not guess_is_valid(guess):
         guess = input(f'{guess_num}/{NUM_GUESSES} > ').lower()
@@ -114,34 +126,37 @@ def guess_histogram():
 
 
 def main():
-    word = random.choice(winning_words)
     guess_num = 1
-    past_guesses = []
-    clear()
-    while guess_num <= NUM_GUESSES:
+    for guess_num in range(1, NUM_GUESSES + 1):
+        print_game()
         guess = get_guess(guess_num)
-        past_guesses.append(format_guess(word, guess))
-        print_game(word, guess, past_guesses, incorrect_chars(word, guess))
-        if guess == word:
+        update_knowledge(guess)
+        past_guesses.append(format_guess(guess))
+        if guess == WORD:
             break
         guess_num += 1
+    print_game()
     if guess_num <= NUM_GUESSES:
         CUR.execute(f'INSERT INTO Scores(GUESSES) VALUES ({guess_num})')
-        print(f'Congratulations! Word guessed in {guess_num} guesses')
+        print_text(f'Congratulations! Word guessed in {guess_num} guesses')
     else:
-        print(f'The word was: {word}\nBetter luck next time.')
-    guess_histogram()
+        print_text(f'The word was: {WORD}')
+        print_text('Better luck next time.')
 
 
 if __name__ == '__main__':
-    CON = sqlite3.connect('worble.db')
+    db = Path(__file__).parent.resolve() / 'worble.db'
+    CON = sqlite3.connect(db)
     CUR = CON.cursor()
-    CUR.execute('CREATE TABLE IF NOT EXISTS Scores('
-                'ID INTEGER PRIMARY KEY AUTOINCREMENT,'
-                'GUESSES INTEGER'
-                ')')
+    CUR.execute(
+        'CREATE TABLE IF NOT EXISTS Scores('
+        'ID INTEGER PRIMARY KEY AUTOINCREMENT,'
+        'GUESSES INTEGER)'
+    )
     try:
+        WORD = random.choice(WINNING_WORDS)
         main()
+        guess_histogram()
     finally:
         CON.commit()
         CON.close()
